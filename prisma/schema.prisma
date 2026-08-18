@@ -1,0 +1,846 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  HAUSVERWALTER
+  MIETER
+  DIENSTLEISTER
+}
+
+enum TicketCategory {
+  HEIZUNG
+  WASSER
+  ELEKTRIK
+  SANITAER
+  FENSTER_TUEREN
+  SCHIMMEL
+  AUFZUG
+  ALLGEMEINE_REPARATUR
+  REINIGUNG
+  AUSSENANLAGE
+  SONSTIGES
+}
+
+enum TicketPriority {
+  NIEDRIG
+  NORMAL
+  HOCH
+  NOTFALL
+}
+
+enum TicketStatus {
+  NEU
+  PRUEFUNG_ERFORDERLICH
+  RUECKFRAGE_AN_MIETER
+  FREIGEGEBEN
+  DIENSTLEISTER_ANGEFRAGT
+  TERMINABSTIMMUNG
+  TERMIN_BESTAETIGT
+  IN_BEARBEITUNG
+  WARTEN_AUF_MATERIAL
+  WARTEN_AUF_FREIGABE
+  ERLEDIGT
+  VOM_MIETER_BESTAETIGT
+  ABGESCHLOSSEN
+  ABGELEHNT
+}
+
+enum MessageKind {
+  MESSAGE
+  SYSTEM
+  INTERNAL
+}
+
+enum NotificationType {
+  NEW_TICKET
+  NEW_MESSAGE
+  WORK_ORDER_REQUEST
+  APPOINTMENT_PROPOSED
+  APPOINTMENT_CONFIRMED
+  STATUS_CHANGED
+  QUESTION
+  OVERDUE
+  WORK_COMPLETED
+  FEEDBACK_RECEIVED
+  REMINDER
+}
+
+enum DocumentVisibility {
+  ALL
+  MANAGER_ONLY
+  TENANT
+  PROVIDER
+}
+
+enum AppointmentStatus {
+  PROPOSED
+  CONFIRMED
+  DECLINED
+  CANCELLED
+  NO_SHOW
+}
+
+enum ProviderStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum AutomationType {
+  EMERGENCY_WARNING
+  PROVIDER_RESPONSE_REMINDER
+  APPOINTMENT_REMINDER
+  STATUS_MESSAGE
+  OVERDUE_WARNING
+  AUTO_ARCHIVE
+  FEEDBACK_REQUEST
+}
+
+enum ReportChannel {
+  PORTAL
+  PUBLIC_LINK
+  QR_CODE
+  EMAIL
+  PHONE
+}
+
+enum DocumentKind {
+  GENERAL
+  DAMAGE_PHOTO
+  BEFORE_PHOTO
+  AFTER_PHOTO
+  WORK_REPORT
+  INVOICE
+  OFFER
+  INSURANCE_PACKAGE
+}
+
+enum InvoiceSource {
+  MANUAL
+  MICROSOFT_365
+  GOOGLE_WORKSPACE
+  FORWARDING
+  IMAP
+}
+
+enum InvoiceStatus {
+  RECEIVED
+  MATCHED
+  REVIEW_REQUIRED
+  APPROVED
+  REJECTED
+  QUESTION
+}
+
+enum InvoiceRisk {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ConnectorType {
+  MICROSOFT_365
+  GOOGLE_WORKSPACE
+  FORWARDING
+  IMAP
+}
+
+enum ConnectorStatus {
+  TEST_MODE
+  CONFIGURED
+  DISABLED
+}
+
+enum DispatchStrategy {
+  AUTO_ORDER
+  REVIEW_FIRST
+  QUOTE_FIRST
+}
+
+enum ProviderRequestType {
+  WORK_ORDER
+  QUOTE_REQUEST
+}
+
+enum OfferStatus {
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum AccessAction {
+  ACCEPT
+  REJECT
+  SUBMIT_OFFER
+  MESSAGE
+  PROPOSE_APPOINTMENT
+  STATUS_UPDATE
+  COMPLETE_WORK
+  UPLOAD_INVOICE
+  REQUEST_OTP
+}
+
+enum AssetStatus {
+  ACTIVE
+  REPLACEMENT_RECOMMENDED
+  RETIRED
+}
+
+enum AuditActorType {
+  USER
+  PROVIDER_LINK
+  TENANT_LINK
+  SYSTEM
+}
+
+model Organization {
+  id               String                  @id @default(cuid())
+  name             String
+  claim            String
+  createdAt        DateTime                @default(now())
+  users            User[]
+  properties       Property[]
+  serviceProviders ServiceProvider[]
+  trades           Trade[]
+  documents        Document[]
+  settings         OrganizationSettings?
+  automationRules  AutomationRule[]
+  connectors       InboundConnector[]
+  providerAccesses ProviderAccess[]
+  activationTokens TenantActivationToken[]
+  invoices         Invoice[]
+  assets           Asset[]
+  auditLogs        AuditLog[]
+  outboundMessages OutboundMessage[]
+
+  @@index([name])
+}
+
+model User {
+  id                   String                  @id @default(cuid())
+  organizationId       String
+  name                 String
+  email                String                  @unique
+  phone                String?
+  passwordHash         String
+  role                 Role
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  organization         Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  leases               Lease[]
+  tenantTickets        Ticket[]                @relation("TicketTenant")
+  managedTickets       Ticket[]                @relation("TicketManager")
+  messages             Message[]
+  notifications        Notification[]
+  documents            Document[]
+  statusChanges        StatusHistory[]         @relation("StatusChangedBy")
+  proposedAppointments Appointment[]           @relation("AppointmentProposer")
+  serviceProvider      ServiceProvider?
+  ratings              Rating[]
+  internalNotes        InternalNote[]
+  activationTokens     TenantActivationToken[]
+  issuedProviderAccess ProviderAccess[]        @relation("ProviderAccessCreator")
+  reviewedInvoices     Invoice[]               @relation("InvoiceReviewer")
+  auditLogs            AuditLog[]
+
+  @@index([organizationId, role])
+}
+
+model Property {
+  id               String                    @id @default(cuid())
+  organizationId   String
+  name             String
+  address          String
+  imageUrl         String?
+  unitCount        Int                       @default(0)
+  contactName      String
+  contactEmail     String
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  organization     Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  buildings        Building[]
+  tickets          Ticket[]
+  documents        Document[]
+  serviceProviders PropertyServiceProvider[]
+  assets           Asset[]
+
+  @@index([organizationId])
+}
+
+model Building {
+  id         String   @id @default(cuid())
+  propertyId String
+  name       String
+  address    String
+  property   Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  units      Unit[]
+  tickets    Ticket[]
+
+  @@index([propertyId])
+}
+
+model Unit {
+  id            String     @id @default(cuid())
+  buildingId    String
+  reportingCode String     @unique @default(cuid())
+  label         String
+  floor         String
+  rooms         Int
+  squareMeter   Int
+  building      Building   @relation(fields: [buildingId], references: [id], onDelete: Cascade)
+  leases        Lease[]
+  tickets       Ticket[]
+  documents     Document[]
+  assets        Asset[]
+
+  @@index([buildingId])
+}
+
+model Lease {
+  id       String    @id @default(cuid())
+  tenantId String
+  unitId   String
+  startsAt DateTime
+  endsAt   DateTime?
+  tenant   User      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  unit     Unit      @relation(fields: [unitId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([unitId])
+}
+
+model ServiceProvider {
+  id                   String                    @id @default(cuid())
+  organizationId       String
+  userId               String?                   @unique
+  companyName          String
+  contactName          String
+  email                String
+  phone                String
+  address              String
+  serviceArea          String
+  availability         String
+  rating               Float                     @default(0)
+  averageResponseHours Int                       @default(12)
+  status               ProviderStatus            @default(ACTIVE)
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+  organization         Organization              @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user                 User?                     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  trades               ServiceProviderTrade[]
+  properties           PropertyServiceProvider[]
+  assignedTickets      Ticket[]                  @relation("TicketProvider")
+  ratings              Rating[]
+  accesses             ProviderAccess[]
+  invoices             Invoice[]
+  offers               Offer[]
+
+  @@index([organizationId, status])
+  @@index([email])
+}
+
+model Trade {
+  id             String                 @id @default(cuid())
+  organizationId String
+  name           String
+  category       TicketCategory
+  organization   Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  providers      ServiceProviderTrade[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId, category])
+}
+
+model ServiceProviderTrade {
+  providerId String
+  tradeId    String
+  provider   ServiceProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  trade      Trade           @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+
+  @@id([providerId, tradeId])
+}
+
+model PropertyServiceProvider {
+  propertyId String
+  providerId String
+  property   Property        @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  provider   ServiceProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@id([propertyId, providerId])
+}
+
+model Ticket {
+  id                     String              @id @default(cuid())
+  organizationId         String
+  number                 String              @unique
+  publicToken            String?             @unique
+  publicTokenHash        String?             @unique
+  publicTokenExpiresAt   DateTime?
+  publicTokenRevokedAt   DateTime?
+  source                 ReportChannel       @default(PORTAL)
+  reportedWithoutLogin   Boolean             @default(false)
+  reporterName           String?
+  reporterEmail          String?
+  reporterPhone          String?
+  title                  String
+  description            String
+  room                   String
+  category               TicketCategory
+  priority               TicketPriority      @default(NORMAL)
+  status                 TicketStatus        @default(NEU)
+  propertyId             String
+  buildingId             String
+  unitId                 String
+  tenantId               String
+  managerId              String
+  assignedProviderId     String?
+  providerRequestType    ProviderRequestType @default(WORK_ORDER)
+  dueDate                DateTime
+  appointmentAt          DateTime?
+  preferredWindows       String[]
+  costEstimate           Decimal?            @db.Decimal(10, 2)
+  approvedCostLimit      Decimal?            @db.Decimal(10, 2)
+  finalCost              Decimal?            @db.Decimal(10, 2)
+  workHours              Decimal?            @db.Decimal(5, 2)
+  completionReport       String?
+  reviewRequired         Boolean             @default(true)
+  reviewReason           String?
+  reviewedAt             DateTime?
+  autoDispatchedAt       DateTime?
+  costApprovedAt         DateTime?
+  completedAt            DateTime?
+  tenantConfirmedAt      DateTime?
+  claimedAt              DateTime?
+  autoQualifiedAt        DateTime?
+  providerRequestedAt    DateTime?
+  providerAcceptedAt     DateTime?
+  appointmentConfirmedAt DateTime?
+  workStartedAt          DateTime?
+  invoiceMatchedAt       DateTime?
+  reopenedCount          Int                 @default(0)
+  relatedTicketId        String?
+  warrantySuspected      Boolean             @default(false)
+  incidentKey            String?
+  assetId                String?
+  archivedAt             DateTime?
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+  property               Property            @relation(fields: [propertyId], references: [id], onDelete: Restrict)
+  building               Building            @relation(fields: [buildingId], references: [id], onDelete: Restrict)
+  unit                   Unit                @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  tenant                 User                @relation("TicketTenant", fields: [tenantId], references: [id], onDelete: Restrict)
+  manager                User                @relation("TicketManager", fields: [managerId], references: [id], onDelete: Restrict)
+  assignedProvider       ServiceProvider?    @relation("TicketProvider", fields: [assignedProviderId], references: [id], onDelete: SetNull)
+  messages               Message[]
+  statusHistory          StatusHistory[]
+  appointments           Appointment[]
+  documents              Document[]
+  notifications          Notification[]
+  ratings                Rating[]
+  internalNotes          InternalNote[]
+  automations            AutomationLog[]
+  providerAccesses       ProviderAccess[]
+  invoices               Invoice[]
+  offers                 Offer[]
+  materials              MaterialEntry[]
+  auditLogs              AuditLog[]
+  outboundMessages       OutboundMessage[]
+  asset                  Asset?              @relation(fields: [assetId], references: [id], onDelete: SetNull)
+  relatedTicket          Ticket?             @relation("RelatedTickets", fields: [relatedTicketId], references: [id], onDelete: SetNull)
+  repeatTickets          Ticket[]            @relation("RelatedTickets")
+
+  @@index([organizationId, status])
+  @@index([organizationId, priority])
+  @@index([organizationId, reviewRequired])
+  @@index([tenantId, createdAt])
+  @@index([assignedProviderId, status])
+  @@index([dueDate])
+  @@index([incidentKey])
+  @@index([relatedTicketId])
+  @@index([assetId])
+}
+
+model Message {
+  id             String      @id @default(cuid())
+  ticketId       String
+  authorId       String?
+  kind           MessageKind @default(MESSAGE)
+  body           String
+  attachmentUrl  String?
+  attachmentName String?
+  createdAt      DateTime    @default(now())
+  ticket         Ticket      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author         User?       @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+}
+
+model InternalNote {
+  id        String   @id @default(cuid())
+  ticketId  String
+  authorId  String
+  body      String
+  createdAt DateTime @default(now())
+  ticket    Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  @@index([ticketId, createdAt])
+}
+
+model Appointment {
+  id                 String            @id @default(cuid())
+  ticketId           String
+  proposedById       String?
+  startsAt           DateTime
+  endsAt             DateTime
+  status             AppointmentStatus @default(PROPOSED)
+  note               String?
+  calendarUid        String            @unique @default(uuid())
+  confirmedAt        DateTime?
+  cancelledAt        DateTime?
+  cancellationReason String?
+  noShowAt           DateTime?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @default(now()) @updatedAt
+  ticket             Ticket            @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  proposedBy         User?             @relation("AppointmentProposer", fields: [proposedById], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, startsAt])
+}
+
+model Document {
+  id             String             @id @default(cuid())
+  organizationId String
+  ticketId       String?
+  propertyId     String?
+  unitId         String?
+  ownerId        String?
+  fileName       String
+  originalName   String
+  url            String
+  contentType    String
+  sizeBytes      Int
+  kind           DocumentKind       @default(GENERAL)
+  checksum       String?
+  visibility     DocumentVisibility @default(ALL)
+  createdAt      DateTime           @default(now())
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ticket         Ticket?            @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  property       Property?          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  unit           Unit?              @relation(fields: [unitId], references: [id], onDelete: Cascade)
+  owner          User?              @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  invoice        Invoice?
+  offer          Offer?
+
+  @@index([organizationId, visibility])
+  @@index([ticketId])
+  @@index([organizationId, kind])
+}
+
+model StatusHistory {
+  id          String        @id @default(cuid())
+  ticketId    String
+  fromStatus  TicketStatus?
+  toStatus    TicketStatus
+  changedById String?
+  note        String?
+  createdAt   DateTime      @default(now())
+  ticket      Ticket        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  changedBy   User?         @relation("StatusChangedBy", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  ticketId  String?
+  type      NotificationType
+  title     String
+  body      String
+  href      String
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ticket    Ticket?          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@index([ticketId])
+}
+
+model Rating {
+  id         String           @id @default(cuid())
+  ticketId   String
+  tenantId   String
+  providerId String?
+  score      Int
+  comment    String?
+  createdAt  DateTime         @default(now())
+  ticket     Ticket           @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  tenant     User             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  provider   ServiceProvider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId])
+  @@index([providerId])
+}
+
+model AutomationLog {
+  id        String         @id @default(cuid())
+  ticketId  String
+  type      AutomationType
+  message   String
+  createdAt DateTime       @default(now())
+  ticket    Ticket         @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId, type])
+}
+
+model OrganizationSettings {
+  id                           String           @id @default(cuid())
+  organizationId               String           @unique
+  brandPrimary                 String           @default("#14233C")
+  brandAccent                  String           @default("#18B7A0")
+  logoUrl                      String?
+  customDomain                 String?
+  senderName                   String           @default("ObjektConnect")
+  senderEmail                  String?
+  enabledModules               Json
+  requiredFields               Json
+  labels                       Json
+  communicationChannels        Json
+  defaultCostLimit             Decimal          @default(250) @db.Decimal(10, 2)
+  highCostThreshold            Decimal          @default(1000) @db.Decimal(10, 2)
+  providerResponseHours        Int              @default(24)
+  appointmentReminderHours     Int              @default(24)
+  requireProviderOtpCompletion Boolean          @default(false)
+  autopilotEnabled             Boolean          @default(true)
+  dispatchStrategy             DispatchStrategy @default(AUTO_ORDER)
+  createdAt                    DateTime         @default(now())
+  updatedAt                    DateTime         @updatedAt
+  organization                 Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+}
+
+model Offer {
+  id          String          @id @default(cuid())
+  ticketId    String
+  providerId  String
+  documentId  String?         @unique
+  amount      Decimal         @db.Decimal(10, 2)
+  description String
+  status      OfferStatus     @default(SUBMITTED)
+  validUntil  DateTime?
+  reviewedAt  DateTime?
+  reviewNote  String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  ticket      Ticket          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  provider    ServiceProvider @relation(fields: [providerId], references: [id], onDelete: Restrict)
+  document    Document?       @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, status, createdAt])
+  @@index([providerId, status])
+}
+
+model AutomationRule {
+  id             String       @id @default(cuid())
+  organizationId String
+  name           String
+  trigger        String
+  action         String
+  conditions     Json
+  enabled        Boolean      @default(true)
+  priority       Int          @default(100)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, enabled, priority])
+}
+
+model InboundConnector {
+  id             String          @id @default(cuid())
+  organizationId String
+  type           ConnectorType
+  status         ConnectorStatus @default(TEST_MODE)
+  displayName    String
+  inboundAddress String?
+  config         Json
+  lastSyncAt     DateTime?
+  lastError      String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, type])
+}
+
+model ProviderAccess {
+  id             String          @id @default(cuid())
+  organizationId String
+  ticketId       String
+  providerId     String
+  createdById    String?
+  tokenHash      String          @unique
+  tokenHint      String
+  allowedActions AccessAction[]
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  lastUsedAt     DateTime?
+  otpHash        String?
+  otpExpiresAt   DateTime?
+  otpVerifiedAt  DateTime?
+  createdAt      DateTime        @default(now())
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ticket         Ticket          @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  provider       ServiceProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  createdBy      User?           @relation("ProviderAccessCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  events         AccessEvent[]
+
+  @@index([ticketId, expiresAt])
+  @@index([providerId, revokedAt])
+}
+
+model AccessEvent {
+  id        String         @id @default(cuid())
+  accessId  String
+  action    AccessAction
+  success   Boolean        @default(true)
+  detail    String?
+  createdAt DateTime       @default(now())
+  access    ProviderAccess @relation(fields: [accessId], references: [id], onDelete: Cascade)
+
+  @@index([accessId, createdAt])
+}
+
+model TenantActivationToken {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  tokenHash      String       @unique
+  tokenHint      String
+  expiresAt      DateTime
+  usedAt         DateTime?
+  revokedAt      DateTime?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model Invoice {
+  id             String           @id @default(cuid())
+  organizationId String
+  ticketId       String
+  providerId     String?
+  documentId     String?          @unique
+  reviewedById   String?
+  source         InvoiceSource    @default(MANUAL)
+  status         InvoiceStatus    @default(RECEIVED)
+  risk           InvoiceRisk      @default(MEDIUM)
+  invoiceNumber  String?
+  supplierName   String?
+  amount         Decimal?         @db.Decimal(10, 2)
+  issuedAt       DateTime?
+  idempotencyKey String           @unique
+  extractedData  Json
+  checks         Json
+  recommendation String
+  matchedAt      DateTime?
+  reviewedAt     DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ticket         Ticket           @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  provider       ServiceProvider? @relation(fields: [providerId], references: [id], onDelete: SetNull)
+  document       Document?        @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  reviewedBy     User?            @relation("InvoiceReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, status, risk])
+  @@index([ticketId, createdAt])
+  @@index([providerId, invoiceNumber])
+}
+
+model MaterialEntry {
+  id          String   @id @default(cuid())
+  ticketId    String
+  description String
+  quantity    Decimal  @default(1) @db.Decimal(10, 2)
+  unit        String   @default("Stk.")
+  unitCost    Decimal? @db.Decimal(10, 2)
+  createdAt   DateTime @default(now())
+  ticket      Ticket   @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([ticketId])
+}
+
+model Asset {
+  id                   String       @id @default(cuid())
+  organizationId       String
+  propertyId           String
+  unitId               String?
+  name                 String
+  category             String
+  manufacturer         String?
+  model                String?
+  serialNumber         String?
+  installedAt          DateTime?
+  warrantyUntil        DateTime?
+  lastServiceAt        DateTime?
+  replacementThreshold Decimal?     @db.Decimal(10, 2)
+  status               AssetStatus  @default(ACTIVE)
+  notes                String?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  property             Property     @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  unit                 Unit?        @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  tickets              Ticket[]
+
+  @@index([organizationId, propertyId, category])
+  @@index([warrantyUntil])
+}
+
+model AuditLog {
+  id             String         @id @default(cuid())
+  organizationId String
+  ticketId       String?
+  actorUserId    String?
+  actorType      AuditActorType
+  action         String
+  reason         String
+  metadata       Json
+  createdAt      DateTime       @default(now())
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ticket         Ticket?        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  actorUser      User?          @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([ticketId, createdAt])
+}
+
+model OutboundMessage {
+  id              String       @id @default(cuid())
+  organizationId  String
+  ticketId        String?
+  recipient       String
+  channel         String
+  subject         String
+  body            String
+  calendarContent String?
+  status          String       @default("TEST_MODE")
+  idempotencyKey  String       @unique
+  scheduledAt     DateTime     @default(now())
+  sentAt          DateTime?
+  createdAt       DateTime     @default(now())
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  ticket          Ticket?      @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status, scheduledAt])
+  @@index([ticketId])
+}
