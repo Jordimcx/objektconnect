@@ -18,3 +18,5 @@ tmp/
 *.pptx.inspect.ndjson
 ~$*
 AGENTS.md
+.vercel
+.env*

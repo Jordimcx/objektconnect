@@ -79,4 +79,10 @@ npm run cloud:storage:check
 
 ObjektConnect stoppt Cloud-Uploads standardmäßig bei 8 GB dokumentiertem Speicher. Die verbleibenden 2 GB dienen als Reserve innerhalb des R2-Free-Tiers. Der Bucket verwendet ausschließlich die Speicherklasse `Standard`.
 
+Nach dem Verknüpfen des lokalen Projekts mit Vercel werden die Produktionsvariablen verdeckt übertragen:
+
+```bash
+npm run cloud:vercel:configure
+```
+
 Nach der ersten Veröffentlichung werden Anmeldung, Aktivierungslink, Schadensmeldung, Upload, E-Mail, Terminbestätigung und rollenbasierter Zugriff mit Testkonten geprüft. Erst danach werden echte Nutzer eingeladen.

@@ -17,6 +17,7 @@
     "cloud:database:restore": "node scripts/cloud-database.mjs restore",
     "cloud:storage:setup": "node scripts/configure-r2-storage.mjs",
     "cloud:storage:check": "node scripts/cloud-storage.mjs check",
+    "cloud:vercel:configure": "node scripts/configure-vercel.mjs",
     "test": "vitest run",
     "seed": "tsx prisma/seed.ts"
   },
