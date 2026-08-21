@@ -85,4 +85,6 @@ Nach dem Verknüpfen des lokalen Projekts mit Vercel werden die Produktionsvaria
 npm run cloud:vercel:configure
 ```
 
+Die interne Online-Testversion ist unter `https://objektconnect.vercel.app` erreichbar. Bei einer späteren eigenen Domain wird `PRODUCTION_APP_URL` in `.env.cloud.local` aktualisiert und die Vercel-Konfiguration erneut übertragen.
+
 Nach der ersten Veröffentlichung werden Anmeldung, Aktivierungslink, Schadensmeldung, Upload, E-Mail, Terminbestätigung und rollenbasierter Zugriff mit Testkonten geprüft. Erst danach werden echte Nutzer eingeladen.

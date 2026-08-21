@@ -12,12 +12,17 @@ const cloud = await readEnvironmentFile(cloudEnvironmentPath);
 const local = await readEnvironmentFile(localEnvironmentPath);
 
 cloud.PRODUCTION_AUTH_SECRET ||= randomBytes(48).toString("base64url");
+cloud.PRODUCTION_APP_URL ||= "https://objektconnect.vercel.app";
 await writeEnvironmentFile(cloudEnvironmentPath, cloud);
 
+const appUrl = required(cloud, "PRODUCTION_APP_URL");
 const variables = {
   DATABASE_URL: required(cloud, "CLOUD_DATABASE_URL"),
   AUTH_SECRET: required(cloud, "PRODUCTION_AUTH_SECRET"),
   AUTH_TRUST_HOST: "true",
+  AUTH_URL: appUrl,
+  NEXTAUTH_URL: appUrl,
+  APP_URL: appUrl,
   STORAGE_DRIVER: "s3",
   S3_ENDPOINT: required(cloud, "S3_ENDPOINT"),
   S3_REGION: cloud.S3_REGION || "auto",
