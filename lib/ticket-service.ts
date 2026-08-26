@@ -4,6 +4,7 @@ import {
   NotificationType,
   Prisma,
   Role,
+  TicketCategory,
   TicketPriority,
   TicketStatus
 } from "@prisma/client";
@@ -12,7 +13,7 @@ import { revalidatePath } from "next/cache";
 import { CATEGORY_LABELS, PRIORITY_LABELS, STATUS_LABELS } from "@/lib/constants";
 import { canAutoDispatch, needsCostApproval, resolveDispatchDecision } from "@/lib/operations";
 import { rankProviders } from "@/lib/provider-matching";
-import { createTicketSuggestion, nextBestAction } from "@/lib/ticket-intelligence";
+import { createTicketSuggestion, nextBestAction, type TicketSuggestion } from "@/lib/ticket-intelligence";
 import { canTransition, dueDateForPriority } from "@/lib/workflow";
 import { canViewTicket, providerIdsForUser, ticketWhereForUser, type SessionUser } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
@@ -152,6 +153,295 @@ export async function listTicketsForUser(user: SessionUser, params?: { query?: s
   });
 }
 
+async function findPrimaryManager(organizationId: string) {
+  return prisma.user.findFirst({
+    where: { organizationId, role: "HAUSVERWALTER" },
+    orderBy: { createdAt: "asc" }
+  });
+}
+
+type TicketReporter =
+  | { kind: "TENANT"; actorId: string }
+  | {
+      kind: "PUBLIC";
+      reporterName: string;
+      reporterEmail: string;
+      reporterPhone: string;
+      channel: "PUBLIC_LINK" | "QR_CODE";
+      publicAccess: { token: string; tokenHash: string };
+    };
+
+type QualifiedTicketContext = {
+  organizationId: string;
+  property: { id: string; name: string; address: string };
+  buildingId: string;
+  unit: { id: string; label: string };
+  tenant: { id: string; name: string; email: string; phone: string | null };
+  manager: { id: string };
+  title: string;
+  description: string;
+  room: string;
+  category: TicketCategory;
+  priority: TicketPriority;
+  preferredWindows: string[];
+  uploads: StoredUpload[];
+  suggestion: TicketSuggestion;
+  reporter: TicketReporter;
+};
+
+// Shared by createTicketForTenant and createPublicTicket; only the reporter differs.
+async function qualifyAndCreateTicket(ctx: QualifiedTicketContext) {
+  const settings = await getOrganizationSettings(ctx.organizationId);
+  const [duplicate, repeatTicket, incidentCount, providers] = await Promise.all([
+    prisma.ticket.findFirst({
+      where: {
+        buildingId: ctx.buildingId,
+        category: ctx.category,
+        status: { notIn: ["ABGESCHLOSSEN", "ABGELEHNT"] },
+        createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
+      },
+      orderBy: { createdAt: "desc" }
+    }),
+    prisma.ticket.findFirst({
+      where: {
+        unitId: ctx.unit.id,
+        category: ctx.category,
+        createdAt: { gte: new Date(Date.now() - 180 * 24 * 60 * 60 * 1000) }
+      },
+      orderBy: { createdAt: "desc" }
+    }),
+    prisma.ticket.count({
+      where: {
+        buildingId: ctx.buildingId,
+        category: ctx.category,
+        createdAt: { gte: new Date(Date.now() - 48 * 60 * 60 * 1000) }
+      }
+    }),
+    prisma.serviceProvider.findMany({
+      where: { organizationId: ctx.organizationId, status: "ACTIVE" },
+      include: {
+        trades: { include: { trade: true } },
+        properties: true,
+        assignedTickets: {
+          select: {
+            propertyId: true,
+            providerRequestedAt: true,
+            providerAcceptedAt: true,
+            completedAt: true,
+            dueDate: true,
+            finalCost: true,
+            approvedCostLimit: true,
+            reopenedCount: true,
+            ratings: { select: { score: true } }
+          },
+          take: 50,
+          orderBy: { createdAt: "desc" }
+        },
+        _count: { select: { assignedTickets: { where: { status: { in: activeStatuses } } } } }
+      }
+    })
+  ]);
+
+  const recommendedProvider = rankProviders(providers, ctx.category, ctx.property.id).find((provider) => provider.tradeMatch) ?? null;
+  const automation = canAutoDispatch({
+    priority: ctx.priority,
+    missingFields: ctx.suggestion.missingFields,
+    hasMatchingProvider: Boolean(recommendedProvider),
+    possibleDuplicate: Boolean(duplicate)
+  });
+  const dispatch = resolveDispatchDecision({
+    qualified: automation.eligible,
+    autopilotEnabled: settings.autopilotEnabled,
+    dispatchStrategy: settings.dispatchStrategy
+  });
+  const status: TicketStatus = dispatch.shouldContactProvider ? "DIENSTLEISTER_ANGEFRAGT" : "PRUEFUNG_ERFORDERLICH";
+  const reviewReason = dispatch.mode === "REVIEW"
+    ? !automation.eligible
+      ? automation.reason
+      : settings.autopilotEnabled
+        ? "Die Verwaltung möchte automatisch geprüfte Vorgänge vor dem Versand kontrollieren."
+        : "Der Autopilot ist deaktiviert. Der Vorgang wurde vorbereitet und wartet auf Freigabe."
+    : null;
+  const incidentKey = incidentCount >= 1 ? `${ctx.buildingId}:${ctx.category}:${new Date().toISOString().slice(0, 10)}` : null;
+  const providerAccess = dispatch.shouldContactProvider ? createOpaqueToken() : null;
+
+  const reportedByTenant = ctx.reporter.kind === "TENANT";
+  const actorId = ctx.reporter.kind === "TENANT" ? ctx.reporter.actorId : undefined;
+  const firstStatusNote = ctx.reporter.kind === "TENANT"
+    ? "Schadensmeldung durch Mieter erstellt."
+    : `Meldung ohne Login durch ${ctx.reporter.reporterName}.`;
+  const recommendationMessage = ctx.reporter.kind === "TENANT"
+    ? `${ctx.suggestion.recommendation} Vorgeschlagen: ${CATEGORY_LABELS[ctx.suggestion.category]}, ${PRIORITY_LABELS[ctx.suggestion.priority]}.`
+    : `Automatische Prüfung: ${CATEGORY_LABELS[ctx.suggestion.category]}, ${PRIORITY_LABELS[ctx.suggestion.priority]}. ${ctx.suggestion.recommendation}`;
+
+  const ticket = await prisma.$transaction(async (tx) => {
+    const number = await nextTicketNumber(tx);
+    const ticket = await tx.ticket.create({
+      data: {
+        organizationId: ctx.organizationId,
+        number,
+        title: ctx.title,
+        description: ctx.description,
+        room: ctx.room,
+        category: ctx.category,
+        priority: ctx.priority,
+        status,
+        propertyId: ctx.property.id,
+        buildingId: ctx.buildingId,
+        unitId: ctx.unit.id,
+        tenantId: ctx.tenant.id,
+        managerId: ctx.manager.id,
+        dueDate: dueDateForPriority(ctx.priority),
+        preferredWindows: ctx.preferredWindows,
+        assignedProviderId: recommendedProvider?.id ?? null,
+        providerRequestType: dispatch.mode === "QUOTE_REQUEST" ? "QUOTE_REQUEST" : "WORK_ORDER",
+        approvedCostLimit: recommendedProvider ? Number(settings.defaultCostLimit) : null,
+        autoQualifiedAt: new Date(),
+        providerRequestedAt: dispatch.shouldContactProvider ? new Date() : null,
+        relatedTicketId: repeatTicket?.id ?? null,
+        warrantySuspected: Boolean(repeatTicket),
+        incidentKey,
+        reviewRequired: dispatch.mode === "REVIEW",
+        reviewReason,
+        reviewedAt: dispatch.mode === "REVIEW" ? null : new Date(),
+        autoDispatchedAt: dispatch.shouldContactProvider ? new Date() : null,
+        ...(ctx.reporter.kind === "PUBLIC"
+          ? {
+              publicTokenHash: ctx.reporter.publicAccess.tokenHash,
+              publicTokenExpiresAt: expiresInHours(24 * 30),
+              source: ctx.reporter.channel,
+              reportedWithoutLogin: true,
+              reporterName: ctx.reporter.reporterName,
+              reporterEmail: ctx.reporter.reporterEmail,
+              reporterPhone: ctx.reporter.reporterPhone
+            }
+          : {}),
+        documents: {
+          create: ctx.uploads.map((upload) => ({
+            organizationId: ctx.organizationId,
+            ownerId: ctx.tenant.id,
+            fileName: upload.fileName,
+            originalName: upload.originalName,
+            url: upload.url,
+            contentType: upload.contentType,
+            sizeBytes: upload.sizeBytes,
+            checksum: upload.checksum,
+            kind: upload.contentType.startsWith("image/") ? "DAMAGE_PHOTO" : "GENERAL",
+            visibility: "ALL"
+          }))
+        },
+        statusHistory: {
+          create: [
+            { toStatus: "NEU", changedById: actorId, note: firstStatusNote },
+            {
+              fromStatus: "NEU",
+              toStatus: status,
+              changedById: actorId,
+              note: dispatch.mode === "WORK_ORDER"
+                ? "Autopilot hat den Routinefall geprüft und als Auftrag weitergeleitet."
+                : dispatch.mode === "QUOTE_REQUEST"
+                  ? "Autopilot hat den Routinefall geprüft und ein Angebot angefordert."
+                  : reviewReason
+            }
+          ]
+        },
+        messages: {
+          create: [
+            {
+              authorId: ctx.reporter.kind === "TENANT" ? ctx.reporter.actorId : ctx.tenant.id,
+              kind: "MESSAGE",
+              body: ctx.description
+            },
+            { kind: "SYSTEM", body: recommendationMessage },
+            {
+              kind: "SYSTEM",
+              body: dispatch.mode === "WORK_ORDER"
+                ? `Autopilot: ${recommendedProvider?.companyName} wurde ausgewählt und bis ${Number(settings.defaultCostLimit).toFixed(2)} EUR beauftragt.`
+                : dispatch.mode === "QUOTE_REQUEST"
+                  ? `Autopilot: ${recommendedProvider?.companyName} wurde ausgewählt und um ein Angebot zum Kostenrahmen von ${Number(settings.defaultCostLimit).toFixed(2)} EUR gebeten.`
+                  : `Entscheidung vorbereitet: ${reviewReason}${duplicate ? ` Ähnlicher Vorgang: ${duplicate.number}.` : ""}`
+            },
+            ...(repeatTicket
+              ? [{ kind: "SYSTEM" as const, body: `Objektgedächtnis: Möglicher Gewährleistungsfall zu ${repeatTicket.number} innerhalb von 180 Tagen.` }]
+              : []),
+            ...(incidentKey
+              ? [{ kind: "SYSTEM" as const, body: `Sammelstörung erkannt: Mehrere Meldungen der Kategorie ${CATEGORY_LABELS[ctx.category]} im selben Gebäude.` }]
+              : [])
+          ]
+        },
+        providerAccesses: providerAccess && recommendedProvider
+          ? {
+              create: {
+                organizationId: ctx.organizationId,
+                providerId: recommendedProvider.id,
+                tokenHash: providerAccess.tokenHash,
+                tokenHint: providerAccess.tokenHint,
+                allowedActions: Object.values(AccessAction),
+                expiresAt: expiresInHours(24 * 14)
+              }
+            }
+          : undefined
+      },
+      include: {
+        tenant: true,
+        manager: true,
+        assignedProvider: { include: { user: true } }
+      }
+    });
+
+    await notifyUsers(
+      tx,
+      [ctx.manager.id],
+      ticket.id,
+      "NEW_TICKET",
+      dispatch.mode === "REVIEW" ? "Versandfreigabe erforderlich" : dispatch.mode === "QUOTE_REQUEST" ? "Angebot automatisch angefordert" : "Routineauftrag automatisch gestartet",
+      `${ticket.number}: ${ticket.title}`
+    );
+    if (ctx.reporter.kind === "PUBLIC") {
+      await notifyUsers(tx, [ctx.tenant.id], ticket.id, "STATUS_CHANGED", "Schadensmeldung erfasst", `${ticket.number}: ${STATUS_LABELS[status]}`);
+    }
+    if (dispatch.shouldContactProvider && ticket.assignedProvider?.userId) {
+      await notifyUsers(tx, [ticket.assignedProvider.userId], ticket.id, "WORK_ORDER_REQUEST", dispatch.mode === "QUOTE_REQUEST" ? "Neue Angebotsanfrage" : "Neuer Auftrag", `${ticket.number}: ${ticket.title}`);
+    }
+    if (providerAccess && recommendedProvider?.email) {
+      await queueOutboundMessage(tx, {
+        organizationId: ctx.organizationId,
+        ticketId: ticket.id,
+        recipient: recommendedProvider.email,
+        subject: `${dispatch.mode === "QUOTE_REQUEST" ? "Angebotsanfrage" : "Auftrag"} ${ticket.number}`,
+        body: [
+          `${ticket.number}: ${ticket.title}`,
+          `Auftraggeber: ${ctx.property.name}`,
+          `Einsatzort: ${ctx.property.address}, Einheit ${ctx.unit.label}, ${ctx.room}`,
+          `Mieter: ${ctx.tenant.name} (${ctx.tenant.phone ?? ctx.tenant.email})`,
+          `Beschreibung: ${ctx.description}`,
+          `${dispatch.mode === "QUOTE_REQUEST" ? "Orientierungsrahmen" : "Freigegebener Kostenrahmen"}: ${Number(settings.defaultCostLimit).toFixed(2)} EUR`,
+          dispatch.mode === "QUOTE_REQUEST"
+            ? "Bitte senden Sie über den sicheren Link Ihr Angebot an die Verwaltung:"
+            : "Passt der Kostenrahmen, können Sie den Auftrag annehmen und direkt Termine an den Mieter senden. Andernfalls senden Sie dort ein Gegenangebot:",
+          appUrl(`/auftrag/${providerAccess.token}`)
+        ].join("\n\n"),
+        eventKey: `provider-auto-dispatch:${ticket.id}:${recommendedProvider.id}`
+      });
+    }
+    await tx.auditLog.create({
+      data: {
+        organizationId: ctx.organizationId,
+        ticketId: ticket.id,
+        actorUserId: actorId,
+        actorType: reportedByTenant ? "USER" : "SYSTEM",
+        action: reportedByTenant ? "TENANT_TICKET_QUALIFIED" : "PUBLIC_TICKET_QUALIFIED",
+        reason: dispatch.mode === "REVIEW" ? reviewReason! : dispatch.mode === "QUOTE_REQUEST" ? "Routinefall automatisch qualifiziert und Angebot angefordert." : "Routinefall automatisch qualifiziert und beauftragt.",
+        metadata: { category: ctx.category, priority: ctx.priority, dispatchMode: dispatch.mode, repeatTicket: repeatTicket?.number ?? null, incidentKey }
+      }
+    });
+    await runAutomations(tx, ticket);
+    return ticket;
+  });
+  await deliverPendingOutboundMessages(ctx.organizationId);
+  return { ticket, automation, dispatch, recommendedProvider, duplicate, repeatTicket, reviewReason };
+}
+
 export async function createTicketForTenant({
   user,
   input,
@@ -188,10 +478,7 @@ export async function createTicketForTenant({
 
   if (!lease) throw new Error("Für diesen Mieter ist keine aktive Wohneinheit hinterlegt.");
 
-  const manager = await prisma.user.findFirst({
-    where: { organizationId: user.organizationId, role: "HAUSVERWALTER" },
-    orderBy: { createdAt: "asc" }
-  });
+  const manager = await findPrimaryManager(user.organizationId);
   if (!manager) throw new Error("Es ist kein Hausverwalter hinterlegt.");
 
   const suggestion = createTicketSuggestion({
@@ -205,226 +492,24 @@ export async function createTicketForTenant({
   const reportedPriority = input.priority as TicketPriority;
   const priorityOrder: TicketPriority[] = ["NIEDRIG", "NORMAL", "HOCH", "NOTFALL"];
   const priority = priorityOrder[Math.max(priorityOrder.indexOf(reportedPriority), priorityOrder.indexOf(suggestion.priority))];
-  const settings = await getOrganizationSettings(user.organizationId);
-  const [duplicate, repeatTicket, incidentCount, providers] = await Promise.all([
-    prisma.ticket.findFirst({
-      where: {
-        buildingId: lease.unit.buildingId,
-        category,
-        status: { notIn: ["ABGESCHLOSSEN", "ABGELEHNT"] },
-        createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
-      },
-      orderBy: { createdAt: "desc" }
-    }),
-    prisma.ticket.findFirst({
-      where: {
-        unitId: lease.unitId,
-        category,
-        createdAt: { gte: new Date(Date.now() - 180 * 24 * 60 * 60 * 1000) }
-      },
-      orderBy: { createdAt: "desc" }
-    }),
-    prisma.ticket.count({
-      where: {
-        buildingId: lease.unit.buildingId,
-        category,
-        createdAt: { gte: new Date(Date.now() - 48 * 60 * 60 * 1000) }
-      }
-    }),
-    prisma.serviceProvider.findMany({
-      where: { organizationId: user.organizationId, status: "ACTIVE" },
-      include: {
-        trades: { include: { trade: true } },
-        properties: true,
-        assignedTickets: {
-          select: {
-            propertyId: true,
-            providerRequestedAt: true,
-            providerAcceptedAt: true,
-            completedAt: true,
-            dueDate: true,
-            finalCost: true,
-            approvedCostLimit: true,
-            reopenedCount: true,
-            ratings: { select: { score: true } }
-          },
-          take: 50,
-          orderBy: { createdAt: "desc" }
-        },
-        _count: { select: { assignedTickets: { where: { status: { in: activeStatuses } } } } }
-      }
-    })
-  ]);
-  const recommendedProvider = rankProviders(providers, category, lease.unit.building.propertyId).find((provider) => provider.tradeMatch);
-  const automation = canAutoDispatch({
+
+  const { ticket } = await qualifyAndCreateTicket({
+    organizationId: user.organizationId,
+    property: lease.unit.building.property,
+    buildingId: lease.unit.buildingId,
+    unit: lease.unit,
+    tenant: lease.tenant,
+    manager,
+    title: input.title,
+    description: input.description,
+    room: input.room,
+    category,
     priority,
-    missingFields: suggestion.missingFields,
-    hasMatchingProvider: Boolean(recommendedProvider),
-    possibleDuplicate: Boolean(duplicate)
+    preferredWindows: input.preferredWindows,
+    uploads,
+    suggestion,
+    reporter: { kind: "TENANT", actorId: user.id }
   });
-  const dispatch = resolveDispatchDecision({
-    qualified: automation.eligible,
-    autopilotEnabled: settings.autopilotEnabled,
-    dispatchStrategy: settings.dispatchStrategy
-  });
-  const status: TicketStatus = dispatch.shouldContactProvider ? "DIENSTLEISTER_ANGEFRAGT" : "PRUEFUNG_ERFORDERLICH";
-  const reviewReason = dispatch.mode === "REVIEW"
-    ? !automation.eligible
-      ? automation.reason
-      : settings.autopilotEnabled
-        ? "Die Verwaltung möchte automatisch geprüfte Vorgänge vor dem Versand kontrollieren."
-        : "Der Autopilot ist deaktiviert. Der Vorgang wurde vorbereitet und wartet auf Freigabe."
-    : null;
-  const incidentKey = incidentCount >= 1 ? `${lease.unit.buildingId}:${category}:${new Date().toISOString().slice(0, 10)}` : null;
-  const providerAccess = dispatch.shouldContactProvider ? createOpaqueToken() : null;
-
-  const ticket = await prisma.$transaction(async (tx) => {
-    const number = await nextTicketNumber(tx);
-    const ticket = await tx.ticket.create({
-      data: {
-        organizationId: user.organizationId,
-        number,
-        title: input.title,
-        description: input.description,
-        room: input.room,
-        category,
-        priority,
-        status,
-        propertyId: lease.unit.building.propertyId,
-        buildingId: lease.unit.buildingId,
-        unitId: lease.unitId,
-        tenantId: user.id,
-        managerId: manager.id,
-        dueDate: dueDateForPriority(priority),
-        preferredWindows: input.preferredWindows,
-        assignedProviderId: recommendedProvider?.id ?? null,
-        providerRequestType: dispatch.mode === "QUOTE_REQUEST" ? "QUOTE_REQUEST" : "WORK_ORDER",
-        approvedCostLimit: recommendedProvider ? Number(settings.defaultCostLimit) : null,
-        autoQualifiedAt: new Date(),
-        providerRequestedAt: dispatch.shouldContactProvider ? new Date() : null,
-        relatedTicketId: repeatTicket?.id ?? null,
-        warrantySuspected: Boolean(repeatTicket),
-        incidentKey,
-        reviewRequired: dispatch.mode === "REVIEW",
-        reviewReason,
-        reviewedAt: dispatch.mode === "REVIEW" ? null : new Date(),
-        autoDispatchedAt: dispatch.shouldContactProvider ? new Date() : null,
-        documents: {
-          create: uploads.map((upload) => ({
-            organizationId: user.organizationId,
-            ownerId: user.id,
-            fileName: upload.fileName,
-            originalName: upload.originalName,
-            url: upload.url,
-            contentType: upload.contentType,
-            sizeBytes: upload.sizeBytes,
-            checksum: upload.checksum,
-            kind: upload.contentType.startsWith("image/") ? "DAMAGE_PHOTO" : "GENERAL",
-            visibility: "ALL"
-          }))
-        },
-        statusHistory: {
-          create: [
-            { toStatus: "NEU", changedById: user.id, note: "Schadensmeldung durch Mieter erstellt." },
-            {
-              fromStatus: "NEU",
-              toStatus: status,
-              changedById: user.id,
-              note: dispatch.mode === "WORK_ORDER"
-                ? "Autopilot hat den Routinefall geprüft und als Auftrag weitergeleitet."
-                : dispatch.mode === "QUOTE_REQUEST"
-                  ? "Autopilot hat den Routinefall geprüft und ein Angebot angefordert."
-                  : reviewReason
-            }
-          ]
-        },
-        messages: {
-          create: [
-            {
-              authorId: user.id,
-              kind: "MESSAGE",
-              body: input.description
-            },
-            {
-              kind: "SYSTEM",
-              body: `${suggestion.recommendation} Vorgeschlagen: ${CATEGORY_LABELS[suggestion.category]}, ${PRIORITY_LABELS[suggestion.priority]}.`
-            },
-            {
-              kind: "SYSTEM",
-              body: dispatch.mode === "WORK_ORDER"
-                ? `Autopilot: ${recommendedProvider?.companyName} wurde ausgewählt und bis ${Number(settings.defaultCostLimit).toFixed(2)} EUR beauftragt.`
-                : dispatch.mode === "QUOTE_REQUEST"
-                  ? `Autopilot: ${recommendedProvider?.companyName} wurde ausgewählt und um ein Angebot zum Kostenrahmen von ${Number(settings.defaultCostLimit).toFixed(2)} EUR gebeten.`
-                  : `Entscheidung vorbereitet: ${reviewReason}${duplicate ? ` Ähnlicher Vorgang: ${duplicate.number}.` : ""}`
-            },
-            ...(repeatTicket
-              ? [{ kind: "SYSTEM" as const, body: `Objektgedächtnis: Möglicher Gewährleistungsfall zu ${repeatTicket.number} innerhalb von 180 Tagen.` }]
-              : []),
-            ...(incidentKey
-              ? [{ kind: "SYSTEM" as const, body: `Sammelstörung erkannt: Mehrere Meldungen der Kategorie ${CATEGORY_LABELS[category]} im selben Gebäude.` }]
-              : [])
-          ]
-        },
-        providerAccesses: providerAccess && recommendedProvider
-          ? {
-              create: {
-                organizationId: user.organizationId,
-                providerId: recommendedProvider.id,
-                tokenHash: providerAccess.tokenHash,
-                tokenHint: providerAccess.tokenHint,
-                allowedActions: Object.values(AccessAction),
-                expiresAt: expiresInHours(24 * 14)
-              }
-            }
-          : undefined
-      },
-      include: {
-        tenant: true,
-        manager: true,
-        assignedProvider: { include: { user: true } }
-      }
-    });
-
-    await notifyUsers(tx, [manager.id], ticket.id, "NEW_TICKET", dispatch.mode === "REVIEW" ? "Versandfreigabe erforderlich" : dispatch.mode === "QUOTE_REQUEST" ? "Angebot automatisch angefordert" : "Routineauftrag automatisch gestartet", `${ticket.number}: ${ticket.title}`);
-    if (dispatch.shouldContactProvider && ticket.assignedProvider?.userId) {
-      await notifyUsers(tx, [ticket.assignedProvider.userId], ticket.id, "WORK_ORDER_REQUEST", dispatch.mode === "QUOTE_REQUEST" ? "Neue Angebotsanfrage" : "Neuer Auftrag", `${ticket.number}: ${ticket.title}`);
-    }
-    if (providerAccess && recommendedProvider?.email) {
-      await queueOutboundMessage(tx, {
-        organizationId: user.organizationId,
-        ticketId: ticket.id,
-        recipient: recommendedProvider.email,
-        subject: `${dispatch.mode === "QUOTE_REQUEST" ? "Angebotsanfrage" : "Auftrag"} ${ticket.number}`,
-        body: [
-          `${ticket.number}: ${ticket.title}`,
-          `Auftraggeber: ${lease.unit.building.property.name}`,
-          `Einsatzort: ${lease.unit.building.property.address}, Einheit ${lease.unit.label}, ${input.room}`,
-          `Mieter: ${lease.tenant.name} (${lease.tenant.phone ?? lease.tenant.email})`,
-          `Beschreibung: ${input.description}`,
-          `${dispatch.mode === "QUOTE_REQUEST" ? "Orientierungsrahmen" : "Freigegebener Kostenrahmen"}: ${Number(settings.defaultCostLimit).toFixed(2)} EUR`,
-          dispatch.mode === "QUOTE_REQUEST"
-            ? "Bitte senden Sie über den sicheren Link Ihr Angebot an die Verwaltung:"
-            : "Passt der Kostenrahmen, können Sie den Auftrag annehmen und direkt Termine an den Mieter senden. Andernfalls senden Sie dort ein Gegenangebot:",
-          appUrl(`/auftrag/${providerAccess.token}`)
-        ].join("\n\n"),
-        eventKey: `provider-auto-dispatch:${ticket.id}:${recommendedProvider.id}`
-      });
-    }
-    await tx.auditLog.create({
-      data: {
-        organizationId: user.organizationId,
-        ticketId: ticket.id,
-        actorUserId: user.id,
-        actorType: "USER",
-        action: "TENANT_TICKET_QUALIFIED",
-        reason: dispatch.mode === "REVIEW" ? reviewReason! : dispatch.mode === "QUOTE_REQUEST" ? "Routinefall automatisch qualifiziert und Angebot angefordert." : "Routinefall automatisch qualifiziert und beauftragt.",
-        metadata: { category, priority, dispatchMode: dispatch.mode, repeatTicket: repeatTicket?.number ?? null, incidentKey }
-      }
-    });
-    await runAutomations(tx, ticket);
-    return ticket;
-  });
-  await deliverPendingOutboundMessages(user.organizationId);
   return ticket;
 }
 
@@ -462,248 +547,38 @@ export async function createPublicTicket({
   const lease = unit.leases[0];
   if (!lease) throw new Error("Für diese Wohneinheit ist kein aktives Mietverhältnis hinterlegt.");
 
-  const manager = await prisma.user.findFirst({
-    where: { organizationId: unit.building.property.organizationId, role: "HAUSVERWALTER" },
-    orderBy: { createdAt: "asc" }
-  });
+  const manager = await findPrimaryManager(unit.building.property.organizationId);
   if (!manager) throw new Error("Für dieses Objekt ist keine Hausverwaltung hinterlegt.");
 
-  const settings = await getOrganizationSettings(unit.building.property.organizationId);
+  const suggestion = createTicketSuggestion(input);
   const publicAccess = createOpaqueToken();
 
-  const suggestion = createTicketSuggestion(input);
-  const duplicate = await prisma.ticket.findFirst({
-    where: {
-      buildingId: unit.buildingId,
-      category: suggestion.category,
-      status: { notIn: ["ABGESCHLOSSEN", "ABGELEHNT"] },
-      createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }
-    },
-    orderBy: { createdAt: "desc" }
-  });
-  const repeatTicket = await prisma.ticket.findFirst({
-    where: {
-      unitId: unit.id,
-      category: suggestion.category,
-      createdAt: { gte: new Date(Date.now() - 180 * 24 * 60 * 60 * 1000) }
-    },
-    orderBy: { createdAt: "desc" }
-  });
-  const incidentCount = await prisma.ticket.count({
-    where: {
-      buildingId: unit.buildingId,
-      category: suggestion.category,
-      createdAt: { gte: new Date(Date.now() - 48 * 60 * 60 * 1000) }
-    }
-  });
-  const incidentKey = incidentCount >= 1 ? `${unit.buildingId}:${suggestion.category}:${new Date().toISOString().slice(0, 10)}` : null;
-
-  const providers = await prisma.serviceProvider.findMany({
-    where: { organizationId: unit.building.property.organizationId, status: "ACTIVE" },
-    include: {
-      trades: { include: { trade: true } },
-      properties: true,
-      assignedTickets: {
-        select: {
-          propertyId: true,
-          providerRequestedAt: true,
-          providerAcceptedAt: true,
-          completedAt: true,
-          dueDate: true,
-          finalCost: true,
-          approvedCostLimit: true,
-          reopenedCount: true,
-          ratings: { select: { score: true } }
-        },
-        take: 50,
-        orderBy: { createdAt: "desc" }
-      },
-      _count: {
-        select: {
-          assignedTickets: { where: { status: { in: activeStatuses } } }
-        }
-      }
-    }
-  });
-  const rankedProviders = rankProviders(providers, suggestion.category, unit.building.propertyId);
-  const recommendedProvider = rankedProviders.find((provider) => provider.tradeMatch);
-  const automation = canAutoDispatch({
+  const { ticket, automation, recommendedProvider, duplicate } = await qualifyAndCreateTicket({
+    organizationId: unit.building.property.organizationId,
+    property: unit.building.property,
+    buildingId: unit.buildingId,
+    unit,
+    tenant: lease.tenant,
+    manager,
+    title: input.title,
+    description: input.description,
+    room: input.room,
+    category: suggestion.category,
     priority: suggestion.priority,
-    missingFields: suggestion.missingFields,
-    hasMatchingProvider: Boolean(recommendedProvider),
-    possibleDuplicate: Boolean(duplicate)
-  });
-  const dispatch = resolveDispatchDecision({
-    qualified: automation.eligible,
-    autopilotEnabled: settings.autopilotEnabled,
-    dispatchStrategy: settings.dispatchStrategy
-  });
-  const reviewReason = dispatch.mode === "REVIEW"
-    ? !automation.eligible
-      ? automation.reason
-      : settings.autopilotEnabled
-        ? "Die Verwaltung möchte automatisch geprüfte Vorgänge vor dem Versand kontrollieren."
-        : "Der Autopilot ist deaktiviert. Der Vorgang wurde vorbereitet und wartet auf Freigabe."
-    : null;
-  const providerAccess = dispatch.shouldContactProvider ? createOpaqueToken() : null;
-
-  const result = await prisma.$transaction(async (tx) => {
-    const number = await nextTicketNumber(tx);
-    const status: TicketStatus = dispatch.shouldContactProvider ? "DIENSTLEISTER_ANGEFRAGT" : "PRUEFUNG_ERFORDERLICH";
-    const ticket = await tx.ticket.create({
-      data: {
-        organizationId: unit.building.property.organizationId,
-        number,
-        publicTokenHash: publicAccess.tokenHash,
-        publicTokenExpiresAt: expiresInHours(24 * 30),
-        source: channel,
-        reportedWithoutLogin: true,
-        reporterName: input.reporterName,
-        reporterEmail: input.reporterEmail,
-        reporterPhone: input.reporterPhone,
-        title: input.title,
-        description: input.description,
-        room: input.room,
-        category: suggestion.category,
-        priority: suggestion.priority,
-        status,
-        propertyId: unit.building.propertyId,
-        buildingId: unit.buildingId,
-        unitId: unit.id,
-        tenantId: lease.tenantId,
-        managerId: manager.id,
-        assignedProviderId: recommendedProvider?.id ?? null,
-        providerRequestType: dispatch.mode === "QUOTE_REQUEST" ? "QUOTE_REQUEST" : "WORK_ORDER",
-        dueDate: dueDateForPriority(suggestion.priority),
-        preferredWindows: input.preferredWindows,
-        approvedCostLimit: recommendedProvider ? Number(settings.defaultCostLimit) : null,
-        autoQualifiedAt: new Date(),
-        providerRequestedAt: dispatch.shouldContactProvider ? new Date() : null,
-        relatedTicketId: repeatTicket?.id ?? null,
-        warrantySuspected: Boolean(repeatTicket),
-        incidentKey,
-        reviewRequired: dispatch.mode === "REVIEW",
-        reviewReason,
-        reviewedAt: dispatch.mode === "REVIEW" ? null : new Date(),
-        autoDispatchedAt: dispatch.shouldContactProvider ? new Date() : null,
-        documents: {
-          create: uploads.map((upload) => ({
-            organizationId: unit.building.property.organizationId,
-            ownerId: lease.tenantId,
-            fileName: upload.fileName,
-            originalName: upload.originalName,
-            url: upload.url,
-            contentType: upload.contentType,
-            sizeBytes: upload.sizeBytes,
-            checksum: upload.checksum,
-            kind: upload.contentType.startsWith("image/") ? "DAMAGE_PHOTO" : "GENERAL",
-            visibility: "ALL"
-          }))
-        },
-        statusHistory: {
-          create: [
-            { toStatus: "NEU", note: `Meldung ohne Login durch ${input.reporterName}.` },
-            {
-              fromStatus: "NEU",
-              toStatus: status,
-              note: dispatch.mode === "WORK_ORDER"
-                ? "Autopilot hat den Routinefall geprüft und als Auftrag weitergeleitet."
-                : dispatch.mode === "QUOTE_REQUEST"
-                  ? "Autopilot hat den Routinefall geprüft und ein Angebot angefordert."
-                  : reviewReason
-            }
-          ]
-        },
-        messages: {
-          create: [
-            { kind: "MESSAGE", body: input.description, authorId: lease.tenantId },
-            {
-              kind: "SYSTEM",
-              body: `Automatische Prüfung: ${CATEGORY_LABELS[suggestion.category]}, ${PRIORITY_LABELS[suggestion.priority]}. ${suggestion.recommendation}`
-            },
-            {
-              kind: "SYSTEM",
-              body: dispatch.mode === "WORK_ORDER"
-                ? `Autopilot: ${recommendedProvider?.companyName} wurde ausgewählt und bis ${Number(settings.defaultCostLimit).toFixed(2)} EUR beauftragt.`
-                : dispatch.mode === "QUOTE_REQUEST"
-                  ? `Autopilot: ${recommendedProvider?.companyName} wurde ausgewählt und um ein Angebot zum Kostenrahmen von ${Number(settings.defaultCostLimit).toFixed(2)} EUR gebeten.`
-                  : `Entscheidung vorbereitet: ${reviewReason}${duplicate ? ` Ähnlicher Vorgang: ${duplicate.number}.` : ""}`
-            },
-            ...(repeatTicket
-              ? [{ kind: "SYSTEM" as const, body: `Objektgedächtnis: Möglicher Gewährleistungsfall zu ${repeatTicket.number} innerhalb von 180 Tagen.` }]
-              : []),
-            ...(incidentKey
-              ? [{ kind: "SYSTEM" as const, body: `Sammelstörung erkannt: Mehrere Meldungen der Kategorie ${CATEGORY_LABELS[suggestion.category]} im selben Gebäude.` }]
-              : [])
-          ]
-        },
-        providerAccesses: providerAccess && recommendedProvider
-          ? {
-              create: {
-                organizationId: unit.building.property.organizationId,
-                providerId: recommendedProvider.id,
-                tokenHash: providerAccess.tokenHash,
-                tokenHint: providerAccess.tokenHint,
-                allowedActions: Object.values(AccessAction),
-                expiresAt: expiresInHours(24 * 14)
-              }
-            }
-          : undefined
-      },
-      include: {
-        tenant: true,
-        manager: true,
-        assignedProvider: { include: { user: true } }
-      }
-    });
-
-    await notifyUsers(tx, [manager.id], ticket.id, "NEW_TICKET", dispatch.mode === "REVIEW" ? "Versandfreigabe erforderlich" : dispatch.mode === "QUOTE_REQUEST" ? "Angebot automatisch angefordert" : "Routineauftrag automatisch gestartet", `${ticket.number}: ${ticket.title}`);
-    await notifyUsers(tx, [lease.tenantId], ticket.id, "STATUS_CHANGED", "Schadensmeldung erfasst", `${ticket.number}: ${STATUS_LABELS[status]}`);
-    if (dispatch.shouldContactProvider && ticket.assignedProvider?.userId) {
-      await notifyUsers(tx, [ticket.assignedProvider.userId], ticket.id, "WORK_ORDER_REQUEST", dispatch.mode === "QUOTE_REQUEST" ? "Neue Angebotsanfrage" : "Neuer Auftrag", `${ticket.number}: ${ticket.title}`);
+    preferredWindows: input.preferredWindows,
+    uploads,
+    suggestion,
+    reporter: {
+      kind: "PUBLIC",
+      reporterName: input.reporterName,
+      reporterEmail: input.reporterEmail,
+      reporterPhone: input.reporterPhone,
+      channel,
+      publicAccess
     }
-    if (providerAccess && recommendedProvider?.email) {
-      await queueOutboundMessage(tx, {
-        organizationId: ticket.organizationId,
-        ticketId: ticket.id,
-        recipient: recommendedProvider.email,
-        subject: `${dispatch.mode === "QUOTE_REQUEST" ? "Angebotsanfrage" : "Auftrag"} ${ticket.number}`,
-        body: [
-          `${ticket.number}: ${ticket.title}`,
-          `Auftraggeber: ${unit.building.property.name}`,
-          `Einsatzort: ${unit.building.property.address}, Einheit ${unit.label}, ${input.room}`,
-          `Mieter: ${lease.tenant.name} (${lease.tenant.phone ?? lease.tenant.email})`,
-          `Beschreibung: ${input.description}`,
-          `${dispatch.mode === "QUOTE_REQUEST" ? "Orientierungsrahmen" : "Freigegebener Kostenrahmen"}: ${Number(settings.defaultCostLimit).toFixed(2)} EUR`,
-          dispatch.mode === "QUOTE_REQUEST"
-            ? "Bitte senden Sie über den sicheren Link Ihr Angebot an die Verwaltung:"
-            : "Passt der Kostenrahmen, können Sie den Auftrag annehmen und direkt Termine an den Mieter senden. Andernfalls senden Sie dort ein Gegenangebot:",
-          appUrl(`/auftrag/${providerAccess.token}`)
-        ].join("\n\n"),
-        eventKey: `provider-auto-dispatch:${ticket.id}:${recommendedProvider.id}`
-      });
-    }
-    await runAutomations(tx, ticket);
-    await tx.auditLog.create({
-      data: {
-        organizationId: ticket.organizationId,
-        ticketId: ticket.id,
-        actorType: "SYSTEM",
-        action: "PUBLIC_TICKET_QUALIFIED",
-        reason: dispatch.mode === "REVIEW" ? reviewReason! : dispatch.mode === "QUOTE_REQUEST" ? "Routinefall automatisch qualifiziert und Angebot angefordert." : "Routinefall automatisch qualifiziert und beauftragt.",
-        metadata: {
-          category: suggestion.category,
-          priority: suggestion.priority,
-          dispatchMode: dispatch.mode,
-          repeatTicket: repeatTicket?.number ?? null,
-          incidentKey
-        }
-      }
-    });
-    return { ticket, publicToken: publicAccess.token, automation, recommendedProvider: recommendedProvider ?? null, possibleDuplicate: duplicate?.number ?? null };
   });
-  await deliverPendingOutboundMessages(unit.building.property.organizationId);
-  return result;
+
+  return { ticket, publicToken: publicAccess.token, automation, recommendedProvider, possibleDuplicate: duplicate?.number ?? null };
 }
 
 export async function assignTicket({
