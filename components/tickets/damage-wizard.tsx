@@ -113,21 +113,46 @@ export function DamageWizard({ categories, priorities }: { categories: Option[];
     <Card>
       <CardHeader>
         <CardTitle>Schaden melden</CardTitle>
-        <div className="grid gap-2 sm:grid-cols-6">
-          {steps.map((label, index) => (
+        <div className="mt-2">
+          <div className="flex items-center justify-between text-xs font-semibold text-slate-500">
+            <span>Schritt {step + 1} von {steps.length}</span>
+            <span className="text-accent">{steps[step]}</span>
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100">
             <div
-              key={label}
-              className={`rounded-md px-3 py-2 text-xs font-semibold ${
-                index <= step ? "bg-accent text-white" : "bg-slate-100 text-slate-500"
-              }`}
-            >
-              {index + 1}. {label}
-            </div>
-          ))}
+              className="h-full rounded-full bg-accent transition-all duration-500 ease-fluid"
+              style={{ width: `${((step + 1) / steps.length) * 100}%` }}
+            />
+          </div>
+          <div className="mt-3 hidden gap-1 sm:grid sm:grid-cols-6">
+            {steps.map((label, index) => {
+              const done = index < step;
+              const active = index === step;
+              return (
+                <div
+                  key={label}
+                  className={`flex items-center gap-1.5 text-[11px] font-semibold transition-colors duration-200 ${
+                    done || active ? "text-primary" : "text-slate-400"
+                  }`}
+                >
+                  <span
+                    className={`grid h-4 w-4 shrink-0 place-items-center rounded-full text-[9px] transition-colors duration-200 ${
+                      done ? "bg-accent text-white" : active ? "border-2 border-accent bg-white text-accent" : "border border-slate-200 bg-white text-slate-400"
+                    }`}
+                    aria-hidden="true"
+                  >
+                    {done ? <Check className="h-2.5 w-2.5" /> : index + 1}
+                  </span>
+                  <span className="truncate">{label}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+          <div key={step}>
           {step === 0 ? (
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
@@ -229,6 +254,7 @@ export function DamageWizard({ categories, priorities }: { categories: Option[];
               <p className="mt-4 text-sm text-slate-600">{values.description}</p>
             </div>
           ) : null}
+          </div>
 
           <div className="flex flex-col-reverse gap-3 border-t border-slate-100 pt-5 sm:flex-row sm:justify-between">
             <Button

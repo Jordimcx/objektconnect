@@ -54,7 +54,7 @@ const advantages = [
 export default function HomePage() {
   return (
     <main className="min-h-screen bg-white">
-      <header className="border-b border-slate-200 bg-white">
+      <header className="sticky top-0 z-40 border-b border-slate-200/70 bg-white/75 backdrop-blur-md">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
           <ObjektConnectLogo />
           <nav className="flex items-center gap-2">
@@ -68,11 +68,15 @@ export default function HomePage() {
         </div>
       </header>
 
-      <section className="border-b border-slate-200 bg-muted">
-        <div className="mx-auto grid min-h-[620px] max-w-7xl gap-10 px-4 py-12 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:px-8 lg:py-16">
+      <section className="relative overflow-hidden border-b border-slate-200 bg-muted">
+        <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+          <div className="absolute -left-32 -top-40 h-[520px] w-[520px] rounded-full bg-accent-200/40 blur-3xl" />
+          <div className="absolute -right-24 top-10 h-[420px] w-[420px] rounded-full bg-primary-200/50 blur-3xl" />
+        </div>
+        <div className="relative mx-auto grid min-h-[620px] max-w-7xl gap-10 px-4 py-12 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:px-8 lg:py-16">
           <div className="flex flex-col justify-center">
-            <p className="text-sm font-bold uppercase text-accent">ObjektConnect</p>
-            <h1 className="mt-4 max-w-3xl text-4xl font-bold tracking-normal text-primary sm:text-5xl">
+            <p className="text-eyebrow text-sm font-bold uppercase text-accent">objekt.connect</p>
+            <h1 className="mt-4 max-w-3xl text-display text-5xl font-bold leading-[1.05] text-primary sm:text-6xl">
               Reparaturen, die sich bis zum Abschluss weiterbewegen.
             </h1>
             <p className="mt-5 max-w-xl text-lg leading-8 text-slate-700">
@@ -98,7 +102,7 @@ export default function HomePage() {
           </div>
 
           <div className="flex items-center">
-            <div className="w-full rounded-lg border border-slate-200 bg-white p-5 shadow-soft sm:p-6">
+            <div className="w-full rounded-lg border border-slate-200 bg-white p-5 shadow-card-hover sm:p-6">
               <div className="flex flex-col gap-3 border-b border-slate-100 pb-5 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-sm font-semibold text-slate-500">Durchgängiger Reparaturablauf</p>
@@ -130,17 +134,22 @@ export default function HomePage() {
       <section className="bg-white py-16">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="max-w-3xl">
-            <p className="text-sm font-bold uppercase text-accent">Der Unterschied</p>
-            <h2 className="mt-2 text-3xl font-bold text-primary">Kein weiteres Portal, sondern ein System, das Arbeit zu Ende bringt.</h2>
-            <p className="mt-3 leading-7 text-slate-600">ObjektConnect reduziert Koordination, ohne die Kontrolle aus der Hand zu geben. Menschen entscheiden dort, wo eine Entscheidung wirklich nötig ist.</p>
+            <p className="text-eyebrow text-sm font-bold uppercase text-accent">Der Unterschied</p>
+            <h2 className="mt-2 text-3xl font-bold tracking-tight text-primary">Kein weiteres Portal, sondern ein System, das Arbeit zu Ende bringt.</h2>
+            <p className="mt-3 leading-7 text-slate-600">objekt.connect reduziert Koordination, ohne die Kontrolle aus der Hand zu geben. Menschen entscheiden dort, wo eine Entscheidung wirklich nötig ist.</p>
           </div>
           <div className="mt-10 grid border-y border-slate-200 md:grid-cols-2">
             {advantages.map(({ icon: Icon, title, text }, index) => (
-              <article key={title} className={`p-6 ${index % 2 === 0 ? "md:border-r" : ""} ${index < 2 ? "border-b" : ""} border-slate-200`}>
-                <Icon className="h-7 w-7 text-accent" aria-hidden="true" />
+              <div
+                key={title}
+                className={`group p-6 transition-colors duration-200 hover:bg-slate-50/80 ${index % 2 === 0 ? "md:border-r" : ""} ${index < 2 ? "border-b" : ""} border-slate-200`}
+              >
+                <span className="grid h-11 w-11 place-items-center rounded-lg bg-accent-50 text-accent-700 transition-colors duration-200 group-hover:bg-accent-100">
+                  <Icon className="h-6 w-6" aria-hidden="true" />
+                </span>
                 <h3 className="mt-4 text-lg font-bold text-primary">{title}</h3>
                 <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600">{text}</p>
-              </article>
+              </div>
             ))}
           </div>
         </div>

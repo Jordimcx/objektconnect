@@ -15,7 +15,7 @@ export default async function ProtectedLayout({ children }: { children: React.Re
   ]);
   if (!organization) redirect("/login");
   const shellOrganization = session.user.role === "DIENSTLEISTER"
-    ? { name: "ObjektConnect", claim: "Alle Auftraggeber. Ein Zugang.", settings: null }
+    ? { name: "objekt.connect", claim: "Alle Auftraggeber. Ein Zugang.", settings: null }
     : organization;
 
   return (

@@ -850,16 +850,30 @@ function StatusHistory({ history }: { history: TicketDetail["statusHistory"] }) 
       <CardHeader>
         <CardTitle>Statushistorie</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-3">
-        {history.map((entry) => (
-          <div key={entry.id} className="border-l-2 border-accent pl-3 text-sm">
-            <p className="font-bold text-primary">{STATUS_LABELS[entry.toStatus]}</p>
-            <p className="text-slate-500">
-              {formatDateTime(entry.createdAt)} · {entry.changedBy?.name ?? "System"}
-            </p>
-            {entry.note ? <p className="mt-1 text-slate-600">{entry.note}</p> : null}
-          </div>
-        ))}
+      <CardContent>
+        <ol className="relative space-y-5">
+          <span className="absolute left-[7px] top-1 bottom-1 w-px bg-gradient-to-b from-accent via-accent/40 to-slate-200" aria-hidden="true" />
+          {history.map((entry, index) => {
+            const isLatest = index === 0;
+            return (
+              <li key={entry.id} className="relative pl-6 text-sm">
+                <span
+                  className={`absolute left-0 top-1 grid h-4 w-4 place-items-center rounded-full ring-4 ring-white ${
+                    isLatest ? "bg-accent shadow-sm" : "bg-white border-2 border-slate-300"
+                  }`}
+                  aria-hidden="true"
+                >
+                  {isLatest ? <span className="h-1.5 w-1.5 rounded-full bg-white" /> : null}
+                </span>
+                <p className="font-bold text-primary">{STATUS_LABELS[entry.toStatus]}</p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {formatDateTime(entry.createdAt)} · {entry.changedBy?.name ?? "System"}
+                </p>
+                {entry.note ? <p className="mt-1 leading-6 text-slate-600">{entry.note}</p> : null}
+              </li>
+            );
+          })}
+        </ol>
       </CardContent>
     </Card>
   );

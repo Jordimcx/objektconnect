@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { motion } from "framer-motion";
+import { springSmooth } from "@/lib/motion";
 import {
   Bell,
   Building2,
@@ -47,12 +49,14 @@ export function NavLink({
   href,
   label,
   icon,
-  badge
+  badge,
+  scope = "desktop"
 }: {
   href: string;
   label: string;
   icon: NavIconName;
   badge?: number;
+  scope?: "desktop" | "mobile";
 }) {
   const pathname = usePathname();
   const active = pathname === href || pathname.startsWith(`${href}/`);
@@ -62,14 +66,21 @@ export function NavLink({
     <Link
       href={href}
       className={cn(
-        "focus-ring flex min-h-11 items-center gap-3 rounded-md px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-white hover:text-primary",
-        active && "bg-white text-primary shadow-sm"
+        "focus-ring relative flex min-h-11 items-center gap-3 rounded-md px-3 py-2 text-sm font-semibold transition-colors duration-150",
+        active ? "text-primary" : "text-slate-600 hover:text-primary"
       )}
     >
-      <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
-      <span className="truncate">{label}</span>
+      {active ? (
+        <motion.span
+          layoutId={`nav-active-pill-${scope}`}
+          className="absolute inset-0 rounded-md bg-white shadow-sm"
+          transition={springSmooth}
+        />
+      ) : null}
+      <Icon className="relative z-10 h-5 w-5 shrink-0" aria-hidden="true" />
+      <span className="relative z-10 truncate">{label}</span>
       {badge ? (
-        <span className="ml-auto rounded-full bg-accent px-2 py-0.5 text-xs font-bold text-white">{badge}</span>
+        <span className="relative z-10 ml-auto rounded-full bg-accent px-2 py-0.5 text-xs font-bold text-white">{badge}</span>
       ) : null}
     </Link>
   );

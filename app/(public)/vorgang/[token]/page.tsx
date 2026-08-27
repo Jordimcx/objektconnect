@@ -163,7 +163,37 @@ function progressForStatus(status: string) {
 }
 
 function ProcessProgress({ current }: { current: number }) {
-  return <section aria-label="Bearbeitungsfortschritt" className="grid grid-cols-6 overflow-hidden rounded-md border border-slate-200 bg-white">{processSteps.map((step, index) => <div key={step} className={`min-w-0 border-r border-slate-200 px-1 py-3 text-center last:border-r-0 ${index <= current ? "bg-teal-50" : "bg-white"}`}><span className={`mx-auto grid h-6 w-6 place-items-center rounded-full text-xs font-bold ${index < current ? "bg-accent text-white" : index === current ? "border-2 border-accent text-accent" : "bg-slate-100 text-slate-400"}`}>{index < current ? <Check className="h-3.5 w-3.5" aria-hidden="true" /> : index + 1}</span><p className={`mt-1 truncate text-[10px] font-semibold sm:text-xs ${index <= current ? "text-primary" : "text-slate-400"}`}>{step}</p></div>)}</section>;
+  const percent = processSteps.length > 1 ? (current / (processSteps.length - 1)) * 100 : 0;
+  return (
+    <section aria-label="Bearbeitungsfortschritt" className="rounded-lg border border-slate-200 bg-white p-5 shadow-card">
+      <div className="relative">
+        <div className="absolute left-4 right-4 top-4 h-0.5 -translate-y-1/2 rounded-full bg-slate-200" aria-hidden="true" />
+        <div
+          className="absolute left-4 top-4 h-0.5 -translate-y-1/2 rounded-full bg-accent transition-all duration-700 ease-fluid"
+          style={{ width: `calc((100% - 2rem) * ${percent / 100})` }}
+          aria-hidden="true"
+        />
+        <div className="relative grid grid-cols-6 gap-1">
+          {processSteps.map((step, index) => {
+            const done = index < current;
+            const active = index === current;
+            return (
+              <div key={step} className="flex flex-col items-center gap-2 text-center">
+                <span
+                  className={`grid h-8 w-8 place-items-center rounded-full text-xs font-bold ring-4 ring-white transition-all duration-300 ${
+                    done ? "bg-accent text-white shadow-sm" : active ? "border-2 border-accent bg-white text-accent shadow-sm" : "border border-slate-200 bg-white text-slate-400"
+                  }`}
+                >
+                  {done ? <Check className="h-4 w-4" aria-hidden="true" /> : index + 1}
+                </span>
+                <p className={`truncate text-[10px] font-semibold sm:text-xs ${done || active ? "text-primary" : "text-slate-400"}`}>{step}</p>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  );
 }
 
 function Detail({ icon: Icon, label, value }: { icon: typeof Wrench; label: string; value: string }) {

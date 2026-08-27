@@ -4,6 +4,7 @@ import { DashboardCharts } from "@/components/dashboard/dashboard-charts";
 import { PriorityBadge, StatusBadge } from "@/components/app-shell/status-badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { StatTile } from "@/components/ui/stat-tile";
 import { CATEGORY_LABELS, STATUS_LABELS } from "@/lib/constants";
 import { ticketWhereForUser } from "@/lib/permissions";
 import { getOperationalException, type OperationalException } from "@/lib/operations";
@@ -168,7 +169,7 @@ export default async function DashboardPage() {
 }
 
 function SetupBanner({ completed, percent }: { completed: number; percent: number }) {
-  return <section className="grid gap-4 border-l-4 border-accent bg-white p-5 shadow-soft md:grid-cols-[1fr_auto] md:items-center"><div className="flex min-w-0 items-start gap-3"><ClipboardCheck className="mt-0.5 h-6 w-6 shrink-0 text-accent" aria-hidden="true" /><div className="min-w-0"><p className="font-bold text-primary">Stammdaten einrichten</p><p className="mt-1 text-sm text-slate-600">{completed} von 4 Bereichen sind bereit. Vervollständige die Grundlage für automatische Zuweisung und Kommunikation.</p><div className="mt-3 h-1.5 max-w-xl overflow-hidden rounded-full bg-slate-100"><div className="h-full bg-accent" style={{ width: `${percent}%` }} /></div></div></div><Button asChild variant="accent"><Link href="/onboarding">Einrichtung fortsetzen<ChevronRight className="h-4 w-4" aria-hidden="true" /></Link></Button></section>;
+  return <section className="grid gap-4 border-l-4 border-accent bg-white p-5 shadow-card md:grid-cols-[1fr_auto] md:items-center"><div className="flex min-w-0 items-start gap-3"><ClipboardCheck className="mt-0.5 h-6 w-6 shrink-0 text-accent" aria-hidden="true" /><div className="min-w-0"><p className="font-bold text-primary">Stammdaten einrichten</p><p className="mt-1 text-sm text-slate-600">{completed} von 4 Bereichen sind bereit. Vervollständige die Grundlage für automatische Zuweisung und Kommunikation.</p><div className="mt-3 h-1.5 max-w-xl overflow-hidden rounded-full bg-slate-100"><div className="h-full bg-accent" style={{ width: `${percent}%` }} /></div></div></div><Button asChild variant="accent"><Link href="/onboarding">Einrichtung fortsetzen<ChevronRight className="h-4 w-4" aria-hidden="true" /></Link></Button></section>;
 }
 
 function DashboardFrame({
@@ -200,17 +201,7 @@ function Stats({ items }: { items: Array<{ label: string; value: string | number
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
       {items.map(({ label, value, icon: Icon }) => (
-        <Card key={label}>
-          <CardContent className="flex items-center gap-4 p-5">
-            <div className="grid h-11 w-11 place-items-center rounded-lg bg-accent/10 text-accent">
-              <Icon className="h-6 w-6" aria-hidden="true" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-500">{label}</p>
-              <p className="mt-1 text-2xl font-bold text-primary">{value}</p>
-            </div>
-          </CardContent>
-        </Card>
+        <StatTile key={label} label={label} value={value} icon={<Icon className="h-6 w-6" aria-hidden="true" />} />
       ))}
     </div>
   );
@@ -242,19 +233,30 @@ function ExceptionCockpit({
   return (
     <section>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-        <div><p className="text-sm font-semibold text-accent">Ausnahme-Cockpit</p><h2 className="text-xl font-bold text-primary">Hier wird Ihre Entscheidung gebraucht</h2></div>
+        <div><p className="text-sm font-semibold text-accent">Ausnahme-Cockpit</p><h2 className="text-xl font-bold tracking-tight text-primary">Hier wird Ihre Entscheidung gebraucht</h2></div>
         <p className="text-sm text-slate-500">{entries.length} offene {entries.length === 1 ? "Ausnahme" : "Ausnahmen"}</p>
       </div>
       <div className="mt-4 grid gap-3">
         {entries.map(({ ticket, exception }) => (
-          <Link key={ticket.id} href={`/tickets/${ticket.id}`} className={`grid gap-3 rounded-md border bg-white p-4 hover:shadow-soft sm:grid-cols-[1fr_auto] sm:items-center ${exception.severity === "critical" ? "border-red-300" : exception.severity === "high" ? "border-orange-200" : "border-slate-200"}`}>
+          <Link
+            key={ticket.id}
+            href={`/tickets/${ticket.id}`}
+            className={`group relative grid gap-3 overflow-hidden rounded-md border-l-4 bg-white p-4 pl-5 shadow-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-card-hover sm:grid-cols-[1fr_auto] sm:items-center ${
+              exception.severity === "critical" ? "border-l-red-500" : exception.severity === "high" ? "border-l-amber-400" : "border-l-slate-300"
+            }`}
+          >
+            {exception.severity === "critical" ? (
+              <span className="absolute right-4 top-4 h-2 w-2 animate-pulse rounded-full bg-red-500" aria-hidden="true" />
+            ) : null}
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2"><p className="text-sm font-bold text-primary">{exception.title}</p><PriorityBadge priority={ticket.priority} /></div>
               <p className="mt-1 font-semibold text-primary">{ticket.number} · {ticket.title}</p>
               <p className="mt-1 text-sm leading-6 text-slate-600">{exception.reason}</p>
               <p className="mt-1 text-xs text-slate-500">{ticket.property.name} · {ticket.tenant.name}</p>
             </div>
-            <span className="flex items-center gap-2 text-sm font-bold text-accent">{exception.action}<ChevronRight className="h-4 w-4" aria-hidden="true" /></span>
+            <span className="flex items-center gap-2 text-sm font-bold text-accent transition-transform duration-200 group-hover:translate-x-0.5">
+              {exception.action}<ChevronRight className="h-4 w-4" aria-hidden="true" />
+            </span>
           </Link>
         ))}
       </div>
@@ -292,7 +294,11 @@ function RecentTickets({
       <CardContent>
         <div className="grid gap-3">
           {tickets.slice(0, 8).map((ticket) => (
-            <Link key={ticket.id} href={`/tickets/${ticket.id}`} className="rounded-md border border-slate-200 bg-slate-50 p-4 hover:bg-white">
+            <Link
+              key={ticket.id}
+              href={`/tickets/${ticket.id}`}
+              className="rounded-md border border-slate-200 bg-slate-50 p-4 transition-all duration-200 hover:-translate-y-0.5 hover:border-slate-200 hover:bg-white hover:shadow-card-hover"
+            >
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="font-bold text-primary">
@@ -339,5 +345,5 @@ function ProviderFocus({
     : ticket.status === "DIENSTLEISTER_ANGEFRAGT"
       ? "Auftrag annehmen oder begründet ablehnen"
       : "Terminoptionen senden und Abstimmung starten";
-  return <section className="grid gap-4 border-l-4 border-accent bg-white p-5 shadow-soft md:grid-cols-[1fr_auto] md:items-center"><div><p className="text-xs font-semibold uppercase text-slate-500">Als Nächstes</p><p className="mt-2 text-xl font-bold text-primary">{ticket.number} · {ticket.title}</p><p className="mt-1 text-sm text-slate-600">{ticket.assignedProvider?.organization?.name ?? "Auftraggeber"} · {ticket.property.name} · {ticket.tenant.name}</p>{ticket.appointmentAt ? <p className="mt-2 font-semibold text-primary">{formatDateTime(ticket.appointmentAt)}</p> : null}<p className="mt-3 text-sm font-bold text-teal-700">{action}</p></div><Button asChild variant="accent"><Link href={`/tickets/${ticket.id}`}>Auftrag öffnen<ChevronRight className="h-4 w-4" aria-hidden="true" /></Link></Button></section>;
+  return <section className="grid gap-4 border-l-4 border-accent bg-white p-5 shadow-card md:grid-cols-[1fr_auto] md:items-center"><div><p className="text-xs font-semibold uppercase text-slate-500">Als Nächstes</p><p className="mt-2 text-xl font-bold text-primary">{ticket.number} · {ticket.title}</p><p className="mt-1 text-sm text-slate-600">{ticket.assignedProvider?.organization?.name ?? "Auftraggeber"} · {ticket.property.name} · {ticket.tenant.name}</p>{ticket.appointmentAt ? <p className="mt-2 font-semibold text-primary">{formatDateTime(ticket.appointmentAt)}</p> : null}<p className="mt-3 text-sm font-bold text-teal-700">{action}</p></div><Button asChild variant="accent"><Link href={`/tickets/${ticket.id}`}>Auftrag öffnen<ChevronRight className="h-4 w-4" aria-hidden="true" /></Link></Button></section>;
 }

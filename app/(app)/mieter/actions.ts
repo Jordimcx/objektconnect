@@ -1,9 +1,11 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { appUrl } from "@/lib/app-url";
 import { createTenantActivationLink } from "@/lib/tenant-access";
 import { requireSessionUser } from "@/lib/session";
+import { importTenants, type TenantImportResult, type TenantImportRow } from "@/lib/tenant-import";
 
 export async function createTenantActivationAction(formData: FormData) {
   try {
@@ -16,6 +18,14 @@ export async function createTenantActivationAction(formData: FormData) {
     if (isRedirectError(error)) throw error;
     redirect(`/mieter?error=${encodeURIComponent(error instanceof Error ? error.message : "Zugang konnte nicht erstellt werden.")}`);
   }
+}
+
+export async function importTenantsAction(rows: TenantImportRow[]): Promise<TenantImportResult> {
+  const user = await requireSessionUser();
+  if (user.role !== "HAUSVERWALTER") throw new Error("Nur die Hausverwaltung kann Mieter importieren.");
+  const result = await importTenants(user.organizationId, rows);
+  if (result.created > 0) revalidatePath("/mieter");
+  return result;
 }
 
 function isRedirectError(error: unknown): error is Error & { digest: string } {

@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/app-shell/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
+import { TenantImport } from "@/components/mieter/tenant-import";
 import { prisma } from "@/lib/prisma";
 import { requireSessionUser } from "@/lib/session";
 import { createTenantActivationAction } from "./actions";
@@ -65,7 +66,10 @@ export default async function TenantsPage({
   return (
     <div className="space-y-6">
       <NoticeToast message={query.error} type="error" />
-      <PageHeader eyebrow="Mieterverwaltung" title="Mieter und Mietverhältnisse" description="Nach Objekt, Belegung und Kontakt durchsuchen. Vorgänge und Zugang sind direkt zugeordnet." />
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <PageHeader eyebrow="Mieterverwaltung" title="Mieter und Mietverhältnisse" description="Nach Objekt, Belegung und Kontakt durchsuchen. Vorgänge und Zugang sind direkt zugeordnet." />
+        <TenantImport />
+      </div>
       {query.activationLink ? <div className="rounded-md border border-teal-200 bg-teal-50 p-4"><p className="font-bold text-primary">Aktivierungslink für {query.tenant ?? "Mieter"}</p><p className="mt-1 text-sm text-slate-600">{query.mailStatus === "SENT" ? "Die Aktivierungsmail wurde versendet." : query.mailStatus === "FAILED" ? "Der Mailversand ist fehlgeschlagen. Bitte den Link vorerst direkt weitergeben." : "Der Mailversand ist noch nicht vollständig verbunden."} Der Link läuft nach 48 Stunden ab.</p><div className="mt-3"><CopyLink value={query.activationLink} label="Aktivierungslink kopieren" /></div></div> : null}
 
       <div className="grid gap-3 sm:grid-cols-3">

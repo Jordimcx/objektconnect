@@ -35,8 +35,8 @@ export const PRIORITY_LABELS: Record<TicketPriority, string> = {
 
 export const PRIORITY_STYLES: Record<TicketPriority, string> = {
   NIEDRIG: "bg-slate-100 text-slate-700 border-slate-200",
-  NORMAL: "bg-blue-50 text-blue-700 border-blue-200",
-  HOCH: "bg-orange-50 text-orange-700 border-orange-200",
+  NORMAL: "bg-sky-50 text-sky-700 border-sky-200",
+  HOCH: "bg-amber-50 text-amber-800 border-amber-200",
   NOTFALL: "bg-red-50 text-red-700 border-red-200"
 };
 
@@ -57,20 +57,23 @@ export const STATUS_LABELS: Record<TicketStatus, string> = {
   ABGELEHNT: "Abgelehnt"
 };
 
+// Color encodes operational meaning, not the individual state: neutral = not yet
+// triaged/terminal, amber = needs a human decision, blue = waiting on a reply,
+// teal = actively moving, green = done. Keeps 14 states scannable at a glance.
 export const STATUS_STYLES: Record<TicketStatus, string> = {
   NEU: "bg-slate-100 text-slate-700 border-slate-200",
-  PRUEFUNG_ERFORDERLICH: "bg-blue-50 text-blue-700 border-blue-200",
-  RUECKFRAGE_AN_MIETER: "bg-orange-50 text-orange-700 border-orange-200",
-  FREIGEGEBEN: "bg-cyan-50 text-cyan-700 border-cyan-200",
-  DIENSTLEISTER_ANGEFRAGT: "bg-indigo-50 text-indigo-700 border-indigo-200",
-  TERMINABSTIMMUNG: "bg-amber-50 text-amber-700 border-amber-200",
+  PRUEFUNG_ERFORDERLICH: "bg-amber-50 text-amber-800 border-amber-200",
+  WARTEN_AUF_FREIGABE: "bg-amber-50 text-amber-800 border-amber-200",
+  RUECKFRAGE_AN_MIETER: "bg-sky-50 text-sky-700 border-sky-200",
+  DIENSTLEISTER_ANGEFRAGT: "bg-sky-50 text-sky-700 border-sky-200",
+  TERMINABSTIMMUNG: "bg-sky-50 text-sky-700 border-sky-200",
+  WARTEN_AUF_MATERIAL: "bg-sky-50 text-sky-700 border-sky-200",
+  FREIGEGEBEN: "bg-teal-50 text-teal-700 border-teal-200",
   TERMIN_BESTAETIGT: "bg-teal-50 text-teal-700 border-teal-200",
-  IN_BEARBEITUNG: "bg-blue-50 text-blue-700 border-blue-200",
-  WARTEN_AUF_MATERIAL: "bg-orange-50 text-orange-700 border-orange-200",
-  WARTEN_AUF_FREIGABE: "bg-purple-50 text-purple-700 border-purple-200",
-  ERLEDIGT: "bg-green-50 text-green-700 border-green-200",
+  IN_BEARBEITUNG: "bg-teal-50 text-teal-700 border-teal-200",
+  ERLEDIGT: "bg-emerald-50 text-emerald-700 border-emerald-200",
   VOM_MIETER_BESTAETIGT: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  ABGESCHLOSSEN: "bg-green-100 text-green-800 border-green-200",
+  ABGESCHLOSSEN: "bg-emerald-100 text-emerald-800 border-emerald-200",
   ABGELEHNT: "bg-slate-100 text-slate-700 border-slate-200"
 };
 

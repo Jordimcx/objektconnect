@@ -118,17 +118,28 @@ export function PublicDamageWizard({ initialCode = "" }: { initialCode?: string 
   }
 
   return (
-    <Card className="overflow-hidden shadow-soft">
-      <div className="grid grid-cols-5 border-b border-slate-200 bg-slate-50">
-        {steps.map(({ label, icon: Icon }, index) => (
-          <div key={label} className={`flex min-w-0 flex-col items-center gap-1 px-1 py-3 text-center text-xs font-semibold ${index <= step ? "text-accent" : "text-slate-400"}`}>
-            <Icon className="h-4 w-4" aria-hidden="true" />
-            <span className="truncate sm:hidden">{index + 1}</span>
-            <span className="hidden sm:block">{label}</span>
-          </div>
-        ))}
+    <Card className="overflow-hidden">
+      <div className="relative border-b border-slate-200 bg-slate-50">
+        <div className="grid grid-cols-5">
+          {steps.map(({ label, icon: Icon }, index) => {
+            const done = index < step;
+            const active = index === step;
+            return (
+              <div key={label} className={`flex min-w-0 flex-col items-center gap-1.5 px-1 py-4 text-center text-xs font-semibold transition-colors duration-200 ${done || active ? "text-primary" : "text-slate-400"}`}>
+                <span className={`grid h-8 w-8 place-items-center rounded-full transition-all duration-300 ${done ? "bg-accent text-white shadow-sm" : active ? "border-2 border-accent bg-white text-accent" : "border border-slate-200 bg-white text-slate-400"}`}>
+                  {done ? <Check className="h-4 w-4" aria-hidden="true" /> : <Icon className="h-4 w-4" aria-hidden="true" />}
+                </span>
+                <span className="hidden truncate sm:block">{label}</span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-slate-200">
+          <div className="h-full bg-accent transition-all duration-500 ease-fluid" style={{ width: `${((step + 1) / steps.length) * 100}%` }} />
+        </div>
       </div>
       <CardContent className="p-5 sm:p-7">
+        <div key={step}>
         {step === 0 ? (
           <div className="space-y-4">
             <div>
@@ -195,7 +206,7 @@ export function PublicDamageWizard({ initialCode = "" }: { initialCode?: string 
               <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-accent" aria-hidden="true" />
               <div>
                 <h2 className="font-bold text-primary">Automatische Prüfung nach dem Absenden</h2>
-                <p className="mt-1 text-sm leading-6 text-slate-600">ObjektConnect prüft Dringlichkeit, Vollständigkeit, ähnliche Schäden und passende Betriebe. Routinefälle laufen direkt weiter; nur Ausnahmen brauchen eine Entscheidung.</p>
+                <p className="mt-1 text-sm leading-6 text-slate-600">objekt.connect prüft Dringlichkeit, Vollständigkeit, ähnliche Schäden und passende Betriebe. Routinefälle laufen direkt weiter; nur Ausnahmen brauchen eine Entscheidung.</p>
               </div>
             </div>
             <dl className="grid gap-3 rounded-md border border-slate-200 bg-slate-50 p-4 text-sm sm:grid-cols-2">
@@ -208,6 +219,7 @@ export function PublicDamageWizard({ initialCode = "" }: { initialCode?: string 
             </dl>
           </div>
         ) : null}
+        </div>
 
         {error ? <p role="alert" className="mt-5 rounded-md border border-red-200 bg-red-50 p-3 text-sm font-semibold text-red-700">{error}</p> : null}
 

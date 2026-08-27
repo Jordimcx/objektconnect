@@ -37,6 +37,7 @@ export function AppShell({
             <NavLink
               key={item.href}
               {...item}
+              scope="desktop"
               badge={item.href === "/benachrichtigungen" ? unreadCount : undefined}
             />
           ))}
@@ -44,7 +45,7 @@ export function AppShell({
       </aside>
 
       <div className="min-w-0">
-        <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
+        <header className="sticky top-0 z-40 border-b border-slate-200/70 bg-white/75 backdrop-blur-md">
           <div className="flex min-h-16 items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
             <div className="lg:hidden">
               <ObjektConnectLogo compact name={organization.name} claim={organization.claim} logoUrl={organization.settings?.logoUrl} />
@@ -78,6 +79,7 @@ export function AppShell({
               <NavLink
                 key={item.href}
                 {...item}
+                scope="mobile"
                 badge={item.href === "/benachrichtigungen" ? unreadCount : undefined}
               />
             ))}
